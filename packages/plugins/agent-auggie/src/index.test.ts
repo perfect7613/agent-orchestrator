@@ -372,9 +372,15 @@ describe("detectActivity", () => {
     expect(agent.detectActivity(auggieIdle)).toBe("idle");
   });
 
-  it("returns waiting_input for Auggie indexing prompt", () => {
-    const indexPrompt = "Choose an option:\n\n     [1] Always index\n     [2] Never index\n\n Press 1/2/3/4 to select directly\n";
+  it("returns waiting_input for Auggie indexing prompt with numbered options", () => {
+    // Test [1], [2] style brackets (the fixed regex \[[1-4]\])
+    const indexPrompt = "Choose an option:\n\n     [1] Always index\n     [2] Never index\n";
     expect(agent.detectActivity(indexPrompt)).toBe("waiting_input");
+  });
+
+  it("returns waiting_input for Press 1/2/3/4 style prompt", () => {
+    const pressPrompt = "Choose an option:\n\n Press 1/2/3/4 to select directly\n";
+    expect(agent.detectActivity(pressPrompt)).toBe("waiting_input");
   });
 
   it("returns waiting_input for permission prompts", () => {

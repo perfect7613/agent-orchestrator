@@ -237,21 +237,6 @@ async function findSessionByTty(tty: string): Promise<AuggieSessionFile | null> 
 }
 
 /**
- * Find an Auggie session file by session UUID.
- */
-async function findSessionById(sessionId: string): Promise<AuggieSessionFile | null> {
-  const filePath = join(getAuggieSessionsDir(), `${sessionId}.json`);
-  try {
-    const content = await readFile(filePath, "utf-8");
-    const parsed: unknown = JSON.parse(content);
-    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return null;
-    return parsed as AuggieSessionFile;
-  } catch {
-    return null;
-  }
-}
-
-/**
  * Get the TTY for a tmux session pane.
  */
 async function getTtyForHandle(handle: RuntimeHandle): Promise<string | null> {
@@ -410,7 +395,7 @@ function classifyTerminalOutput(terminalOutput: string): ActivityState {
   if (/Do you want to proceed\?/i.test(tail)) return "waiting_input";
   if (/\(Y\)es.*\(N\)o/i.test(tail)) return "waiting_input";
   if (/\[y\/n\]/i.test(tail)) return "waiting_input";
-  if (/\[1-4\]|Press 1\/2\/3\/4/i.test(tail)) return "waiting_input";
+  if (/\[[1-4]\]|Press 1\/2\/3\/4/i.test(tail)) return "waiting_input";
   if (/\[Enter\] Confirm/i.test(tail)) return "waiting_input";
 
   return "active";
