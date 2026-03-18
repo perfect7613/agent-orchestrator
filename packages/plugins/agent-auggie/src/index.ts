@@ -514,10 +514,12 @@ function createAuggieAgent(): Agent {
         // in ~/.augment/settings.json or <workspace>/.augment/settings.local.json
       }
 
-      // Pass rules file if specified (agentRulesFile lives on agentConfig)
-      const rulesFile = config.projectConfig?.agentConfig?.agentRulesFile;
-      if (typeof rulesFile === "string" && rulesFile) {
-        const rulesPath = join(config.projectConfig.path, rulesFile);
+      // Pass rules file if specified (agentRulesFile is a top-level ProjectConfig property)
+      if (config.projectConfig?.agentRulesFile) {
+        const rulesPath = join(
+          config.projectConfig.path,
+          config.projectConfig.agentRulesFile,
+        );
         parts.push("--rules", shellEscape(rulesPath));
       }
 

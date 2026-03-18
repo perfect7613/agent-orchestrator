@@ -223,9 +223,7 @@ describe("getLaunchCommand", () => {
           path: "/workspace/repo",
           defaultBranch: "main",
           sessionPrefix: "my",
-          agentConfig: {
-            agentRulesFile: ".agent-rules.md",
-          },
+          agentRulesFile: ".agent-rules.md",
         },
       }),
     );
