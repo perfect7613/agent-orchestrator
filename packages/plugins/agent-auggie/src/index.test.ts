@@ -498,6 +498,47 @@ describe("getActivityState", () => {
     const result = await agent.getActivityState(session);
     expect(result).toBeNull();
   });
+
+  it("returns active when completed is undefined (field not yet set)", async () => {
+    mockTmuxWithProcess("auggie", "/dev/ttys001");
+    const sessionContent = makeAuggieSessionJson({
+      chatHistory: [
+        {
+          exchange: { request_message: "Fix bug" },
+          sequenceId: 1,
+          // completed is intentionally omitted (undefined)
+        },
+      ],
+    });
+    mockSessionFiles([{ filename: "abc-123.json", content: sessionContent }]);
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle() });
+    const result = await agent.getActivityState(session);
+    expect(result?.state).toBe("active");
+  });
+
+  it("matches most recent session when multiple share the same TTY", async () => {
+    mockTmuxWithProcess("auggie", "/dev/ttys001");
+    const staleSession = makeAuggieSessionJson({
+      sessionId: "stale-session",
+      modified: "2026-01-01T00:00:00.000Z",
+      customTitle: "Old session",
+    });
+    const freshSession = makeAuggieSessionJson({
+      sessionId: "fresh-session",
+      modified: new Date().toISOString(),
+      customTitle: "Current session",
+    });
+    mockSessionFiles([
+      { filename: "stale-session.json", content: staleSession },
+      { filename: "fresh-session.json", content: freshSession },
+    ]);
+
+    const session = makeSession({ runtimeHandle: makeTmuxHandle() });
+    const result = await agent.getActivityState(session);
+    // Should use the fresh session, not the stale one
+    expect(result?.state).toBe("ready");
+  });
 });
 
 // =========================================================================

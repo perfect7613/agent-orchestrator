@@ -147,8 +147,22 @@ update_metadata_key() {
   mv "$temp_file" "$metadata_file"
 }
 
+# ============================================================================
+# Strip leading cd prefixes (e.g. "cd /workspace && gh pr create ...")
+# Agents frequently cd into a worktree before running commands.
+# ============================================================================
+cd_prefix_pattern='^[[:space:]]*cd[[:space:]]+.*[[:space:]]+(&&|;)[[:space:]]+(.*)'
+clean_command="$command"
+while [[ "$clean_command" =~ ^[[:space:]]*cd[[:space:]] ]]; do
+  if [[ "$clean_command" =~ $cd_prefix_pattern ]]; then
+    clean_command="\${BASH_REMATCH[2]}"
+  else
+    break
+  fi
+done
+
 # Detect: gh pr create
-if [[ "$command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
+if [[ "$clean_command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
   pr_url=$(echo "$output" | grep -Eo 'https://github[.]com/[^/]+/[^/]+/pull/[0-9]+' | head -1)
   if [[ -n "$pr_url" ]]; then
     update_metadata_key "pr" "$pr_url"
@@ -159,8 +173,8 @@ if [[ "$command" =~ ^gh[[:space:]]+pr[[:space:]]+create ]]; then
 fi
 
 # Detect: git checkout -b <branch> or git switch -c <branch>
-if [[ "$command" =~ ^git[[:space:]]+checkout[[:space:]]+-b[[:space:]]+([^[:space:]]+) ]] || \\
-   [[ "$command" =~ ^git[[:space:]]+switch[[:space:]]+-c[[:space:]]+([^[:space:]]+) ]]; then
+if [[ "$clean_command" =~ ^git[[:space:]]+checkout[[:space:]]+-b[[:space:]]+([^[:space:]]+) ]] || \\
+   [[ "$clean_command" =~ ^git[[:space:]]+switch[[:space:]]+-c[[:space:]]+([^[:space:]]+) ]]; then
   branch="\${BASH_REMATCH[1]}"
   if [[ -n "$branch" ]]; then
     update_metadata_key "branch" "$branch"
@@ -170,8 +184,8 @@ if [[ "$command" =~ ^git[[:space:]]+checkout[[:space:]]+-b[[:space:]]+([^[:space
 fi
 
 # Detect: git checkout <branch> (without -b) or git switch <branch> (without -c)
-if [[ "$command" =~ ^git[[:space:]]+checkout[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]] || \\
-   [[ "$command" =~ ^git[[:space:]]+switch[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]]; then
+if [[ "$clean_command" =~ ^git[[:space:]]+checkout[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]] || \\
+   [[ "$clean_command" =~ ^git[[:space:]]+switch[[:space:]]+([^[:space:]-]+[/-][^[:space:]]+) ]]; then
   branch="\${BASH_REMATCH[1]}"
   if [[ -n "$branch" && "$branch" != "HEAD" ]]; then
     update_metadata_key "branch" "$branch"
@@ -181,7 +195,7 @@ if [[ "$command" =~ ^git[[:space:]]+checkout[[:space:]]+([^[:space:]-]+[/-][^[:s
 fi
 
 # Detect: gh pr merge
-if [[ "$command" =~ ^gh[[:space:]]+pr[[:space:]]+merge ]]; then
+if [[ "$clean_command" =~ ^gh[[:space:]]+pr[[:space:]]+merge ]]; then
   update_metadata_key "status" "merged"
   echo '{"systemMessage": "Updated metadata: status = merged"}'
   exit 0
@@ -217,6 +231,12 @@ async function findSessionByTty(tty: string): Promise<AuggieSessionFile | null> 
 
   const jsonFiles = entries.filter((f) => f.endsWith(".json"));
 
+  // Collect all matching sessions, then pick the most recently modified.
+  // TTYs can be reused (e.g. tmux pane destroyed and reallocated the same
+  // /dev/pts/N), so a stale session file could match. Sorting by modified
+  // timestamp ensures we return the current session, not a stale one.
+  const candidates: AuggieSessionFile[] = [];
+
   for (const file of jsonFiles) {
     try {
       const content = await readFile(join(sessionsDir, file), "utf-8");
@@ -224,14 +244,24 @@ async function findSessionByTty(tty: string): Promise<AuggieSessionFile | null> 
       if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) continue;
       const session = parsed as AuggieSessionFile;
       if (session.terminalId === tty) {
-        return session;
+        candidates.push(session);
       }
     } catch {
       // Skip malformed files
     }
   }
 
-  return null;
+  if (candidates.length === 0) return null;
+  if (candidates.length === 1) return candidates[0]!;
+
+  // Sort by modified timestamp descending — most recent first
+  candidates.sort((a, b) => {
+    const aTime = a.modified ? new Date(a.modified).getTime() : 0;
+    const bTime = b.modified ? new Date(b.modified).getTime() : 0;
+    return bTime - aTime;
+  });
+
+  return candidates[0]!;
 }
 
 /**
@@ -588,8 +618,10 @@ function createAuggieAgent(): Agent {
         : new Date();
       const ageMs = Date.now() - modifiedAt.getTime();
 
-      // Key insight: completed === false means agent is still processing
-      if (lastEntry.completed === false) {
+      // completed === false or undefined means agent is still processing.
+      // undefined occurs when Auggie writes a new chat entry before setting
+      // the completed field — treat as active to avoid premature dispatch.
+      if (lastEntry.completed !== true) {
         return { state: "active", timestamp: modifiedAt };
       }
 
