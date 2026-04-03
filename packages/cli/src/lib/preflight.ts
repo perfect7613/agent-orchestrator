@@ -9,7 +9,6 @@
 
 import { existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
-import { createRequire } from "node:module";
 import { isPortAvailable } from "./web-dir.js";
 import { exec } from "./shell.js";
 
@@ -27,16 +26,17 @@ async function checkPort(port: number): Promise<void> {
 }
 
 /**
- * Find @composio/ao-core package directory by walking up from webDir.
- * Handles npm hoisting by checking both nested and hoisted locations.
+ * Walk up from startDir looking for node_modules/@composio/ao-core.
+ * Mirrors Node's module resolution: checks each ancestor's node_modules
+ * until the package is found or the filesystem root is reached.
+ * This handles both pnpm symlinks (found in webDir/node_modules) and
+ * npm/yarn hoisting (found in a parent node_modules).
  */
 function findPackageUp(startDir: string): string | null {
   let dir = resolve(startDir);
   while (true) {
-    const scopedCore = resolve(dir, "node_modules", "@composio", "ao-core");
-    if (existsSync(scopedCore)) return scopedCore;
-    const hoistedCore = resolve(dir, "node_modules", "ao-core");
-    if (existsSync(hoistedCore)) return hoistedCore;
+    const candidate = resolve(dir, "node_modules", "@composio", "ao-core");
+    if (existsSync(candidate)) return candidate;
     const parent = dirname(dir);
     if (parent === dir) break;
     dir = parent;
@@ -46,24 +46,15 @@ function findPackageUp(startDir: string): string | null {
 
 /**
  * Check that workspace packages have been compiled (TypeScript → JavaScript).
- * Uses Node's module resolution to locate @composio/ao-core, which correctly
- * handles npm/yarn hoisting in global installs.
+ * Locates @composio/ao-core by walking up from webDir, handling both pnpm
+ * workspaces (symlinked deps in webDir/node_modules) and npm/yarn global
+ * installs (hoisted to a parent node_modules).
+ *
+ * Note: we cannot use createRequire().resolve() here because @composio/ao-core
+ * is ESM-only (its exports map defines "import" but not "require"/"default"),
+ * so CJS require.resolve always throws ERR_PACKAGE_PATH_NOT_EXPORTED.
  */
 async function checkBuilt(webDir: string): Promise<void> {
-  // Primary: use Node's module resolution. require.resolve() both locates the
-  // package AND verifies the entry file exists on disk — if it returns without
-  // throwing, the package is installed and built.
-  try {
-    const require = createRequire(resolve(webDir, "package.json"));
-    require.resolve("@composio/ao-core");
-    return;
-  } catch {
-    // Fall through to manual lookup
-  }
-
-  // Fallback: walk up from webDir looking for the package directory.
-  // This handles the case where require.resolve throws MODULE_NOT_FOUND
-  // because dist/index.js doesn't exist yet (installed but not built).
   const corePkgDir = findPackageUp(webDir);
 
   if (!corePkgDir) {
@@ -73,7 +64,6 @@ async function checkBuilt(webDir: string): Promise<void> {
     throw new Error(`Dependencies not installed. ${hint}`);
   }
 
-  // Package directory exists but require.resolve failed — check if it needs building
   const coreEntry = resolve(corePkgDir, "dist", "index.js");
   if (!existsSync(coreEntry)) {
     const hint = webDir.includes("node_modules")
@@ -81,9 +71,6 @@ async function checkBuilt(webDir: string): Promise<void> {
       : "Run: pnpm build";
     throw new Error(`Packages not built. ${hint}`);
   }
-
-  // Package exists and dist exists but require.resolve still failed — unusual
-  // but not a blocker. The package is usable.
 }
 
 /**
